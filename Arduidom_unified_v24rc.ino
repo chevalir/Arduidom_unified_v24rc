@@ -483,7 +483,11 @@ void loop() {
 
 				if (DataSerie[0] == 'P' && DataSerie[1] == 'I' && DataSerie[2] == 'N' && DataSerie[3] == 'G') { // ******************************** PING
 					Serial.print("PING_OK_V:");
+					// @@RC
 					Serial.println(int(ArduiDomVersion));
+					
+					
+					
                 #if (CNF_NETWORK == 1)
 					client.print("PING_OK_V:");
 					//client.print("PING_OK_V:" + byte(ArduiDomVersion));
@@ -651,9 +655,10 @@ void loop() {
 
 					if (aChange == 1 || ForceRefreshData) {
 						if (NewAValue != OldAValue[i]) {
-							if (millis() - LastSend[i] >
+							//@RC FIX CNF_NB_DPIN+i
+							if (millis() - LastSend[CNF_NB_DPIN+i] >
 							        CNF_DELAY_A_SENDS) { // pas d'envoi de valeur si moins de xxx ms avant la precedente
-								LastSend[i] = millis();
+								LastSend[CNF_NB_DPIN+i] = millis(); // @@RC FIX 
                             #if (CNF_NETWORK == 1)
 								data = data + (CNF_NB_DPIN + i);
 								data = data + "=";
@@ -696,7 +701,7 @@ void loop() {
 							// @@RC Fix bug LastSend[i] replaced by  LastSend[CNF_NB_DPIN + CNF_NB_APIN + i]
 							if ( ForceRefreshData 
 								|| ( millis() - LastSend[CNF_NB_DPIN + CNF_NB_APIN + i] > CNF_DELAY_A_SENDS) ) { // pas d'envoi de valeur si moins de xxx ms avant la precedente
-								LastSend[i] = millis();
+								LastSend[CNF_NB_DPIN + CNF_NB_APIN + i] = millis(); // @@RC bug Fix  CNF_NB_DPIN + CNF_NB_APIN + i
                             #if (CNF_NETWORK == 1)
 								data = data + (CNF_NB_DPIN + CNF_NB_APIN + i);
 								data = data + "=";
@@ -1240,7 +1245,10 @@ void loop() {
 				//pinMode(13, OUTPUT);
 				//pinMode(4, INPUT_PULLUP);
 				//CustomValue[SPOT_BUREAU_CUSTOM_COMMAND] = digitalRead(SPOT_BUREAU_STATE_PIN);
-
+	/*Serial.println("buid on:");
+					Serial.print(__DATE__);
+	                Serial.print(" / ");
+	                Serial.println(__TIME__);*/
 			}
 
 
@@ -1252,29 +1260,59 @@ void loop() {
 			** PATH-C @@RC rfReceptionHook
 			**/
 			bool rfReceptionHook() {
-				// DHTValue
 				// @@RC addons radio probes
 				bool ret = true;
 				if (RFData > RF_PROBE_CHACON_OFFSET &
 				        RFData / 1000 == RF_PROBE_CHACON_ID) {
 					parseRFAdrr(RFAddr);
-					float tempdata = RFData - RF_PROBE_CHACON_ID_MASK;
-					tempdata /= 10;
-					int probeID = RFDevice + INDEX_CUSTOM_RF_PROBES;
-					// manage NEG/POS value
-					if ( RFOnOff == 1 ) {
-						CustomValue[CUSTOM_SONDE_OFFSET + probeID] = tempdata;
-						// DHTValue[probeID+1] = tempdata;
-					} else {
-						CustomValue[CUSTOM_SONDE_OFFSET + probeID] = 0 - tempdata;
-						// DHTValue[probeID+1] = 0 - tempdata;
-						
+					// Serial.print(">>RFC:");
+					if (!RFGroup) { 
+						// message should contain temperature values  
+
+						float tempdata = RFData - RF_PROBE_CHACON_ID_MASK;
+						tempdata /= 10;
+						int probeID = RFDevice + INDEX_CUSTOM_RF_PROBES;
+						/*Serial.print("PID:"); 					   
+						Serial.print(probeID);
+
+					    Serial.print(":T:");*/
+
+						// manage NEG/POS value
+						if ( RFOnOff == 1 ) { 
+							// positive value
+							CustomValue[CUSTOM_PROBE_OFFSET + probeID] = tempdata;
+						    // Serial.print(tempdata);
+						} else { 
+							// negative value
+							if (tempdata == 0) {
+								// error send by the node 
+								// nothing to do.
+								// Serial.print("error001");
+							} else {
+								// Serial.print(-tempdata);
+								CustomValue[CUSTOM_PROBE_OFFSET + probeID] = 0 - tempdata;
+							}
+						}
+						// Serial.println("<<");
+
+			 /*
+						Serial.print("Custom[" + String (CUSTOM_PROBE_OFFSET + probeID, DEC) + "]=");
+						Serial.print(CustomValue[CUSTOM_PROBE_OFFSET + probeID]);
+						Serial.println(""); */
+					} else { 
+						// message should contain pin status 
+						// Serial.print(">>SID:"); 					   
+
+						unsigned long fdata = RFData - RF_PROBE_CHACON_ID_MASK;
+						int statusPin = fdata / 10; // remove decimal part
+						// Serial.print(statusPin);
+						int status = fdata - (statusPin * 10);
+						/*Serial.print(":S:");
+						Serial.print(status); */
+						CustomValue[CUSTOM_STATUS_OFFSET + statusPin] = status;
+						// Serial.println("<<");
+
 					}
-         
-					Serial.print("Custom[" + String (CUSTOM_SONDE_OFFSET + probeID, DEC) + "]=");
-					Serial.print(CustomValue[CUSTOM_SONDE_OFFSET + probeID]);
-					Serial.println("");
-         
 					RAZRadio = 0;
 					RFDataLastSend = RFData;
 					RFAddrLastSend = RFAddr;
@@ -1313,7 +1351,7 @@ void loop() {
 			*
 			*/
 			void parseRFAdrr (unsigned long lRFAddr) {
-				bool RFGroup = lRFAddr > 999;
+				RFGroup = lRFAddr > 999;
 				if (RFGroup) {
 					lRFAddr -= 1000;
 				}
@@ -1331,4 +1369,4 @@ void loop() {
 
 			// do: CPzzrtyyooiizzzzzzzzzzcczzzzdczzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
 
-
+// CPzzrtyioozzzzzzzzzzzzcccccccccccccccccccccccccczzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcccccccccccccccc
