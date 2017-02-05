@@ -20,7 +20,7 @@
 //#define FOR_BOBOX59_ONLY    // LIGNE A RETIRER POUR DESACTIVER DES FONCTIONS QUI ME SONT PERSONELLES $$
 //
 //
-//#define DBG_PRINT_CP // Affiche l'etat des pins dans le port série pour debug
+#define DBG_PRINT_CP // Affiche l'etat des pins dans le port série pour debug
 //#define DBG_PRINT_SERIAL // Affiche les entrées/sorties sur le port network via serie pour debug
 //---------------------------------------------------------------------------------------------------------------------------------------------------
 //
@@ -67,7 +67,7 @@ IPAddress CNF_IP_JEEDOM (192, 168, 10, 43); // ADRESSE IP JeeDom
 //
 // DELAY : ATTENTION, une valeur trop petite peut encombrer le port serie avec les parasites !!!
 #define CNF_DELAY_D_SENDS 200 // Delai entre chaque mise a jour d'entrees vers jeedom
-#define CNF_DELAY_A_SENDS 1000 // Delai entre chaque mise a jour d'entrees vers jeedom
+#define CNF_DELAY_A_SENDS 200 // Delai entre chaque mise a jour d'entrees vers jeedom ( default 1000 @@RC set to 200 )
 //--------------------------------------------------------------------------------------------------------------------------------------------------
 // -------- LES SONDES DHT se configurent désormais directement dans la configuration des pins du plugin -------------------------------------------
 //--------------------------------------------------------------------------------------------------------------------------------------------------
@@ -123,7 +123,7 @@ EthernetServer server(58174);
 #elif defined(__AVR_ATmega328P__)
     #define CNF_NB_DPIN 14
     #define CNF_NB_APIN 6
-    #define CNF_NB_CPIN 8 // Extensible à 128 Maximum
+    #define CNF_NB_CPIN 32 // Extensible à 128 Maximum @@RC set to 32
 #elif defined(__AVR_ATmega32U4__)
     #define CNF_NB_DPIN 14
     #define CNF_NB_APIN 6
@@ -383,17 +383,42 @@ void loop() {
 							mySwitch.sendTriState(DataSerie);
 							check = true;
 						}
+                        if (DataSerie[4] == 'H') { //// Radio Mode Chacon DIO ex:SP03H999999990112 
+							// Modifs par Chevalir
+							byte lenRequest = request.length();
+							DataSerie[lenRequest-4] = 0; // group char is not used so set 0 to limit the strtol function
+							bool onOff = DataSerie[lenRequest-3] == '1';
+							// @@rc trim to remove zero header char : 05580042 -> 5580042 ( string started by zero not supported by strtol )
+							int notzero=4;
+							do {} while (DataSerie[++notzero] == '0' && notzero < lenRequest-4);
+							ChaconSender = strtol( &DataSerie[notzero], NULL, 0 );
+							ChaconRecevr = 10 * int(DataSerie[lenRequest-2] - '0') + int(DataSerie[lenRequest-1] - '0');
+							for (int i = 1; i <= RADIO_REPEATS; i++) {
+								mySwitch.send(ChaconSender, ChaconRecevr, onOff);
+							}
+                            check = true;
+						}
+						
+						
+						/*
 						if (DataSerie[4] == 'H') { //// Radio Mode Chacon DIO ex:H 05580042 0100
 							// Modifs par Chevalir
 							DataSerie[13] = 0; // group char is not used so set 0 to limit the strtol function
 							bool onOff = DataSerie[14] == '1';
-							ChaconSender = strtol( &DataSerie[5], NULL, 0 );
+							// @@rc trim to remove zero header char : 05580042 -> 5580042 ( string started by zero not supported by strtol )
+							int notzero=4;
+							do {} while (DataSerie[++notzero] == '0' && notzero < 13);
+							ChaconSender = strtol( &DataSerie[notzero], NULL, 0 );
 							int ChaconRecevr = 10 * int(DataSerie[15] - '0') + int(DataSerie[16] - '0');
 							for (int i = 1; i <= RADIO_REPEATS; i++) {
 								mySwitch.send(ChaconSender, ChaconRecevr, onOff);
 							}
 							check = true;
 						}
+						
+						*/
+						
+						
 					}
                 #endif
 					Serial.print(request);
@@ -650,22 +675,27 @@ void loop() {
 				if (pinmode[CNF_NB_DPIN + CNF_NB_APIN + i] == 'c') {
 					NewCValue = CustomValue[i];
 					int cChange = 0;
-					if (NewCValue > OldCValue[i]) {
-						CCompare = NewCValue - OldCValue[i];
-						if (CCompare > CNF_CPINS_DELTA) {
-							cChange = 1;
+					if (ForceRefreshData) { // @@RC if ForceRefreshData test not required
+						cChange = 1;
+					} else {
+						if (NewCValue > OldCValue[i]) {
+							CCompare = NewCValue - OldCValue[i];
+							if (CCompare > CNF_CPINS_DELTA) {
+								cChange = 1;
+							}
 						}
+						if (OldCValue[i] > NewCValue) {
+							CCompare = OldCValue[i] - NewCValue;
+							if (CCompare > CNF_CPINS_DELTA) {
+								cChange = 1;
+							}
+						}					
 					}
-					if (OldCValue[i] > NewCValue) {
-						CCompare = OldCValue[i] - NewCValue;
-						if (CCompare > CNF_CPINS_DELTA) {
-							cChange = 1;
-						}
-					}
-					if (cChange == 1 || ForceRefreshData) {
-						if (NewCValue != OldCValue[i] || ForceRefreshData) {
-							if (millis() - LastSend[i] >
-							        CNF_DELAY_A_SENDS) { // pas d'envoi de valeur si moins de xxx ms avant la precedente
+					if ( cChange == 1 ) {
+						//if (ForceRefreshData || NewCValue != OldCValue[i] ) {
+							// @@RC Fix bug LastSend[i] replaced by  LastSend[CNF_NB_DPIN + CNF_NB_APIN + i]
+							if ( ForceRefreshData 
+								|| ( millis() - LastSend[CNF_NB_DPIN + CNF_NB_APIN + i] > CNF_DELAY_A_SENDS) ) { // pas d'envoi de valeur si moins de xxx ms avant la precedente
 								LastSend[i] = millis();
                             #if (CNF_NETWORK == 1)
 								data = data + (CNF_NB_DPIN + CNF_NB_APIN + i);
@@ -680,7 +710,7 @@ void loop() {
                             #endif
 								OldCValue[i] = NewCValue;
 							}
-						}
+						//}
 					}
 				}
 			}
@@ -1190,55 +1220,6 @@ void loop() {
 			// Votre partie "setup" perso ici (ne s'executera qu'une fois au demarrage de l'arduino)
 			//
 
-			/**
-			** @@RC patch2 DTH Upload 
-			**/
-			void uploadDTHValues () {
-				/* Old version
-				Serial.print("DHT:");
-				for (int i = 1; i < 17; i++) {
-					Serial.print(DHTValue[i]);
-					if (i < 16) Serial.print(";");
-			}
-				Serial.print('\n');
-				TimerUpdateDHT = millis(); //on stocke la nouvelle heure
-				*/
-
-
-
-				Serial.print("DHT:");
-#if (CNF_NETWORK == 1) 
-				data = "";
-#endif							
-				for (int i = 1; i <= 16; i++) {
-#if (CNF_NETWORK == 1) 					
-					data += 500 + i;
-#endif
-					if (DHTValue[i] != 999) {
-						Serial.print(DHTValue[i]);
-#if (CNF_NETWORK == 1)								
-						data += "="
-						data += DHTValue[i];
-#endif
-					} else {
-						Serial.print("na");
-#if (CNF_NETWORK == 1)								
-						data += "=na";
-#endif
-					}
-					Serial.print(";");
-#if (CNF_NETWORK == 1)								
-					data += "&";
-#endif
-				}
-				Serial.print('\n');
-#if (CNF_NETWORK == 1)
-				Serial.println(data);
-				JeeSendData();
-#endif
-				TimerUpdateDHT = millis();
-			}
-
 
 			/**
 			** Add your custom code here,
@@ -1256,12 +1237,9 @@ void loop() {
 				for ( int i = 0; i< NB_PIN; i++ ) {
 					LastSend[i] = 0;
 				}
-				pinMode(13, OUTPUT);
-				pinMode(4, INPUT_PULLUP);
-				CustomValue[SPOT_BUREAU_CUSTOM_COMMAND] = digitalRead(SPOT_BUREAU_STATE_PIN);
-				for (int i = 0; i <= 16; i++) {
-					DHTValue[i] = 999;
-				}
+				//pinMode(13, OUTPUT);
+				//pinMode(4, INPUT_PULLUP);
+				//CustomValue[SPOT_BUREAU_CUSTOM_COMMAND] = digitalRead(SPOT_BUREAU_STATE_PIN);
 
 			}
 
@@ -1285,20 +1263,23 @@ void loop() {
 					int probeID = RFDevice + INDEX_CUSTOM_RF_PROBES;
 					// manage NEG/POS value
 					if ( RFOnOff == 1 ) {
-						DHTValue[probeID+1] = tempdata;
+						CustomValue[CUSTOM_SONDE_OFFSET + probeID] = tempdata;
+						// DHTValue[probeID+1] = tempdata;
 					} else {
-						DHTValue[probeID+1] = 0 - tempdata;
+						CustomValue[CUSTOM_SONDE_OFFSET + probeID] = 0 - tempdata;
+						// DHTValue[probeID+1] = 0 - tempdata;
+						
 					}
-					Serial.print("DHTValue[" + String (probeID+1, DEC) + "]=");
-					Serial.print(DHTValue[probeID+1]);
+         
+					Serial.print("Custom[" + String (CUSTOM_SONDE_OFFSET + probeID, DEC) + "]=");
+					Serial.print(CustomValue[CUSTOM_SONDE_OFFSET + probeID]);
 					Serial.println("");
-
+         
 					RAZRadio = 0;
 					RFDataLastSend = RFData;
 					RFAddrLastSend = RFAddr;
 					RFProtocolLastSend = RFProtocol;
 					LastRadioMessage = millis();
-					uploadDTHValues();
 					ret = false;
 				}
 				return ret;
@@ -1318,7 +1299,7 @@ void loop() {
 
 			/**
 			** Add your custom code here,
-			** Method call inside the main loop to manage custom values
+			** Method called inside the main loop to manage custom values
 			**
 			**@@RC customHook
 			**/
@@ -1348,6 +1329,6 @@ void loop() {
 
 
 
-			// do: CPzzrtiiooiizzzzzzzzzzcczzzzdczzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+			// do: CPzzrtyyooiizzzzzzzzzzcczzzzdczzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
 
 
